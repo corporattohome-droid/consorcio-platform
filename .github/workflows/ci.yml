@@ -1,15 +1,15 @@
 name: CI
-
 on:
   push:
     branches: [main, 'feat/**']
   pull_request:
     branches: [main]
-
 jobs:
   lint-typecheck:
     name: Lint & Typecheck
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://localhost:5432/consorcio_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
@@ -19,8 +19,8 @@ jobs:
         with:
           node-version: '20'
       - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @consorcio/database exec prisma generate
       - run: pnpm --filter api exec tsc --noEmit
-
   api-tests:
     name: API Unit Tests
     runs-on: ubuntu-latest
@@ -34,7 +34,6 @@ jobs:
           node-version: '20'
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm --filter api test -- --passWithNoTests
-
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest

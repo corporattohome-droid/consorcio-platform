@@ -20,7 +20,7 @@ async function bootstrap() {
 
   const config = app.get(ConfigService)
 
-  await app.register(helmet, {
+  await app.register(helmet as any, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -31,7 +31,7 @@ async function bootstrap() {
     },
   })
 
-  await app.register(compression)
+  await app.register(compression as any)
 
   app.enableCors({
     origin: [
