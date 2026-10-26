@@ -5,18 +5,23 @@ import Decimal from 'decimal.js'
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP })
 
-interface JournalLineInput {
-  accountId: string
-  entryType: EntryType
-  amount: number
-  description?: string
+export class CreateJournalEntryDto {
+  date: string
+  description: string
+  groupId?: string
+  lines: Array<{
+    accountId: string
+    entryType: EntryType
+    amount: number
+    description?: string
+  }>
 }
 
 @Injectable()
 export class AccountingService {
   constructor(private prisma: PrismaService) {}
 
-  async findAllEntries(params: {
+  async getJournalEntries(params: {
     groupId?: string
     status?: JournalEntryStatus
     page?: number
@@ -44,7 +49,7 @@ export class AccountingService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } }
   }
 
-  async findOneEntry(id: string) {
+  async getJournalEntry(id: string) {
     const entry = await this.prisma.journalEntry.findUnique({
       where: { id },
       include: {
@@ -55,16 +60,11 @@ export class AccountingService {
     return entry
   }
 
-  async createEntry(data: {
-    date: Date
-    description: string
-    groupId?: string
-    lines: JournalLineInput[]
-  }) {
-    const debits = data.lines
+  async createJournalEntry(dto: CreateJournalEntryDto) {
+    const debits = dto.lines
       .filter((l) => l.entryType === EntryType.DEBIT)
       .reduce((s, l) => s.plus(new Decimal(l.amount)), new Decimal(0))
-    const credits = data.lines
+    const credits = dto.lines
       .filter((l) => l.entryType === EntryType.CREDIT)
       .reduce((s, l) => s.plus(new Decimal(l.amount)), new Decimal(0))
     if (!debits.equals(credits)) {
@@ -72,7 +72,7 @@ export class AccountingService {
         `Partidas devem ser iguais: débitos R$ ${debits.toFixed(2)} ≠ créditos R$ ${credits.toFixed(2)}`,
       )
     }
-    if (data.lines.length < 2) {
+    if (dto.lines.length < 2) {
       throw new BadRequestException('Um lançamento requer no mínimo duas linhas (partida dobrada)')
     }
 
@@ -81,12 +81,12 @@ export class AccountingService {
     return this.prisma.journalEntry.create({
       data: {
         number,
-        date: data.date,
-        description: data.description,
-        groupId: data.groupId,
+        date: new Date(dto.date),
+        description: dto.description,
+        groupId: dto.groupId,
         status: JournalEntryStatus.PENDING,
         lines: {
-          create: data.lines.map((l) => ({
+          create: dto.lines.map((l) => ({
             accountId: l.accountId,
             entryType: l.entryType,
             amount: new Decimal(l.amount).toDecimalPlaces(2).toString(),
@@ -100,7 +100,7 @@ export class AccountingService {
     })
   }
 
-  async postEntry(id: string, postedBy: string) {
+  async postJournalEntry(id: string, postedBy: string) {
     const entry = await this.prisma.journalEntry.findUnique({ where: { id } })
     if (!entry) throw new NotFoundException('Lançamento contábil não encontrado')
     if (entry.status !== JournalEntryStatus.PENDING) {
@@ -112,7 +112,7 @@ export class AccountingService {
     })
   }
 
-  async reverseEntry(id: string, reversedBy: string) {
+  async reverseJournalEntry(id: string, reversedBy: string) {
     const entry = await this.prisma.journalEntry.findUnique({
       where: { id },
       include: { lines: true },
@@ -151,7 +151,7 @@ export class AccountingService {
     return reversal
   }
 
-  async findAllAccounts(params: { isActive?: boolean }) {
+  async getLedgerAccounts(params: { isActive?: boolean }) {
     return this.prisma.ledgerAccount.findMany({
       where: params.isActive !== undefined ? { isActive: params.isActive } : undefined,
       orderBy: { code: 'asc' },
@@ -161,7 +161,7 @@ export class AccountingService {
     })
   }
 
-  async findAccount(id: string) {
+  async getLedgerAccount(id: string) {
     const account = await this.prisma.ledgerAccount.findUnique({
       where: { id },
       include: {
@@ -197,12 +197,11 @@ export class AccountingService {
 
     const debits = new Decimal(debitAgg._sum.amount?.toString() ?? '0')
     const credits = new Decimal(creditAgg._sum.amount?.toString() ?? '0')
-    const computedBalance = debits.minus(credits)
 
     return {
       ...account,
       accountType: account.accountType,
-      computedBalance: computedBalance.toString(),
+      computedBalance: debits.minus(credits).toString(),
     }
   }
 
