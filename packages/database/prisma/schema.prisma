@@ -1,0 +1,1087 @@
+// ============================================================
+// CONSÓRCIO PLATFORM — PRISMA SCHEMA COMPLETO
+// PostgreSQL · Prisma 5 · Todos os domínios do sistema
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  ANALYST
+  CASHIER
+  AUDITOR
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum PersonType {
+  INDIVIDUAL   // Pessoa Física
+  COMPANY      // Pessoa Jurídica
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+  UNDER_ANALYSIS
+}
+
+enum KycStatus {
+  PENDING
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum GroupStatus {
+  DRAFT
+  OPEN_FOR_ENROLLMENT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum CreditCategory {
+  REAL_ESTATE    // Imóvel
+  VEHICLE        // Veículo
+  MOTORCYCLE     // Motocicleta
+  SERVICES       // Serviços
+  OTHER          // Outros
+}
+
+enum QuotaStatus {
+  AVAILABLE
+  RESERVED
+  ACTIVE
+  TRANSFERRED
+  CANCELLED
+  SURRENDERED    // Desistência
+}
+
+enum ContemplationStatus {
+  NOT_CONTEMPLATED
+  CONTEMPLATED_DRAW        // Por sorteio
+  CONTEMPLATED_BID         // Por lance
+  AWAITING_DOCUMENTATION
+  CREDIT_RELEASED
+  COMPLETED
+}
+
+enum ContractStatus {
+  DRAFT
+  PENDING_SIGNATURE
+  ACTIVE
+  AMENDED
+  CANCELLED
+  CLOSED
+}
+
+enum InstallmentStatus {
+  PENDING
+  DUE_TODAY
+  OVERDUE
+  PAID_PARTIAL
+  PAID
+  WAIVED
+  CANCELLED
+}
+
+enum ChargeStatus {
+  PENDING
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  PIX
+  BOLETO
+  BANK_SLIP
+  TRANSFER
+  CASH
+  CARD
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  REVERSED
+  FAILED
+}
+
+enum AssemblyStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BidType {
+  FREE        // Lance livre
+  FIXED       // Lance fixo
+  COMBINED    // Lance combinado
+}
+
+enum BidStatus {
+  REGISTERED
+  VALID
+  INVALID
+  WINNER
+  RETURNED
+}
+
+enum DrawStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  AUDITED
+}
+
+enum CreditAnalysisStatus {
+  PENDING
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum DisbursementStatus {
+  PENDING
+  AUTHORIZED
+  PROCESSED
+  REVERSED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum SupportRequestStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum JournalEntryStatus {
+  PENDING
+  POSTED
+  REVERSED
+}
+
+enum ReportType {
+  MONTHLY_BALANCE
+  ANNUAL_BALANCE
+  DELINQUENCY_REPORT
+  REGULATORY_BCEN
+  COSIF_REPORT
+  AUDIT_REPORT
+}
+
+// ============================================================
+// DOMÍNIO: IDENTIDADE
+// ============================================================
+
+model User {
+  id                String     @id @default(uuid())
+  email             String     @unique
+  emailVerifiedAt   DateTime?
+  passwordHash      String
+  role              UserRole   @default(CLIENT)
+  status            UserStatus @default(PENDING_VERIFICATION)
+  mfaEnabled        Boolean    @default(false)
+  mfaSecret         String?
+  lastLoginAt       DateTime?
+  lastLoginIp       String?
+  failedLoginCount  Int        @default(0)
+  lockedUntil       DateTime?
+  keycloakId        String?    @unique
+  customerId        String?    @unique
+  customer          Customer?  @relation(fields: [customerId], references: [id])
+  sessions          UserSession[]
+  auditLogs         AuditLog[]
+  approvalRequests  ApprovalRequest[] @relation("ApproverUser")
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @unique
+  refreshHash  String?  @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("user_sessions")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String
+  entityType   String
+  entityId     String?
+  oldValues    Json?
+  newValues    Json?
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// DOMÍNIO: CLIENTES
+// ============================================================
+
+model Customer {
+  id                String         @id @default(uuid())
+  personType        PersonType
+  fullName          String
+  tradeName         String?
+  taxId             String         @unique
+  taxIdMasked       String
+  email             String
+  phone             String?
+  phone2            String?
+  birthDate         DateTime?
+  foundedAt         DateTime?
+  motherName        String?
+  nationality       String?
+  maritalStatus     String?
+  occupation        String?
+  companySize       String?
+  status            CustomerStatus @default(ACTIVE)
+  internalNotes     String?
+  kycStatus         KycStatus      @default(PENDING)
+  kycApprovedAt     DateTime?
+  addresses         Address[]
+  documents         CustomerDocument[]
+  bankAccounts      BankAccount[]
+  kycChecks         KycCheck[]
+  contracts         Contract[]
+  quotaOwnerships   QuotaOwnershipHistory[]
+  notifications     Notification[]
+  supportRequests   SupportRequest[]
+  user              User?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([taxId])
+  @@index([email])
+  @@index([status])
+  @@index([kycStatus])
+  @@map("customers")
+}
+
+model Address {
+  id           String   @id @default(uuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  isPrimary    Boolean  @default(false)
+  label        String?
+  zipCode      String
+  street       String
+  number       String
+  complement   String?
+  neighborhood String
+  city         String
+  state        String
+  country      String   @default("BR")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([customerId])
+  @@map("addresses")
+}
+
+model CustomerDocument {
+  id           String   @id @default(uuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type         String
+  description  String?
+  fileKey      String
+  mimeType     String
+  sizeBytes    Int
+  checksum     String
+  uploadedAt   DateTime @default(now())
+  expiresAt    DateTime?
+  verifiedAt   DateTime?
+  verifiedBy   String?
+
+  @@index([customerId])
+  @@index([type])
+  @@map("customer_documents")
+}
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  bankCode      String
+  bankName      String
+  agency        String
+  agencyDigit   String?
+  account       String
+  accountDigit  String
+  accountType   String
+  isPrimary     Boolean  @default(false)
+  pixKey        String?
+  pixKeyType    String?
+  verifiedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerId])
+  @@map("bank_accounts")
+}
+
+model KycCheck {
+  id          String    @id @default(uuid())
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  checkType   String
+  provider    String?
+  status      KycStatus
+  score       Decimal?  @db.Decimal(5, 2)
+  details     Json?
+  performedAt DateTime
+  expiresAt   DateTime?
+  performedBy String?
+
+  @@index([customerId])
+  @@map("kyc_checks")
+}
+
+// ============================================================
+// DOMÍNIO: CONSÓRCIOS — PLANOS E GRUPOS
+// ============================================================
+
+model Plan {
+  id                   String          @id @default(uuid())
+  name                 String
+  description          String?
+  creditCategory       CreditCategory
+  creditAmountMin      Decimal         @db.Decimal(15, 2)
+  creditAmountMax      Decimal         @db.Decimal(15, 2)
+  termMonthsMin        Int
+  termMonthsMax        Int
+  adminFeeRate         Decimal         @db.Decimal(8, 6)
+  reserveFundRate      Decimal         @db.Decimal(8, 6)
+  insuranceRate        Decimal         @db.Decimal(8, 6) @default(0)
+  adjustmentIndex      String          @default("INCC")
+  isActive             Boolean         @default(true)
+  regulatoryReference  String?
+  groups               ConsortiumGroup[]
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([creditCategory])
+  @@map("plans")
+}
+
+model ConsortiumGroup {
+  id                   String       @id @default(uuid())
+  code                 String       @unique
+  planId               String
+  plan                 Plan         @relation(fields: [planId], references: [id])
+  name                 String
+  description          String?
+  creditAmount         Decimal      @db.Decimal(15, 2)
+  totalQuotas          Int
+  soldQuotas           Int          @default(0)
+  cancelledQuotas      Int          @default(0)
+  termMonths           Int
+  adminFeeRate         Decimal      @db.Decimal(8, 6)
+  reserveFundRate      Decimal      @db.Decimal(8, 6)
+  insuranceRate        Decimal      @db.Decimal(8, 6) @default(0)
+  adjustmentIndex      String       @default("INCC")
+  firstAssemblyDate    DateTime?
+  assemblyDay          Int?
+  status               GroupStatus  @default(DRAFT)
+  closedAt             DateTime?
+  cancelledAt          DateTime?
+  cancelReason         String?
+  quotas               Quota[]
+  assemblies           Assembly[]
+  commonFundBalance    Decimal      @db.Decimal(15, 2) @default(0)
+  reserveFundBalance   Decimal      @db.Decimal(15, 2) @default(0)
+  adminFundBalance     Decimal      @db.Decimal(15, 2) @default(0)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@index([code])
+  @@index([status])
+  @@index([planId])
+  @@map("consortium_groups")
+}
+
+// ============================================================
+// DOMÍNIO: COTAS E CONTRATOS
+// ============================================================
+
+model Quota {
+  id                   String               @id @default(uuid())
+  quotaNumber          String
+  groupId              String
+  group                ConsortiumGroup       @relation(fields: [groupId], references: [id])
+  status               QuotaStatus          @default(AVAILABLE)
+  contemplationStatus  ContemplationStatus  @default(NOT_CONTEMPLATED)
+  currentOwnerId       String?
+  currentOwner         Customer?            @relation(fields: [currentOwnerId], references: [id])
+  ownershipHistory     QuotaOwnershipHistory[]
+  contracts            Contract[]
+  installments         Installment[]
+  bids                 Bid[]
+  contemplations       Contemplation[]
+  cancelledAt          DateTime?
+  cancelReason         String?
+  surrenderedAt        DateTime?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  @@unique([groupId, quotaNumber])
+  @@index([groupId])
+  @@index([status])
+  @@index([currentOwnerId])
+  @@map("quotas")
+}
+
+model QuotaOwnershipHistory {
+  id           String    @id @default(uuid())
+  quotaId      String
+  quota        Quota     @relation(fields: [quotaId], references: [id])
+  customerId   String
+  customer     Customer  @relation(fields: [customerId], references: [id])
+  startDate    DateTime
+  endDate      DateTime?
+  transferType String
+  transferFee  Decimal   @db.Decimal(15, 2) @default(0)
+  notes        String?
+  approvedBy   String?
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([quotaId])
+  @@index([customerId])
+  @@map("quota_ownership_history")
+}
+
+model Contract {
+  id              String         @id @default(uuid())
+  number          String         @unique
+  quotaId         String
+  quota           Quota          @relation(fields: [quotaId], references: [id])
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id])
+  status          ContractStatus @default(DRAFT)
+  version         Int            @default(1)
+  templateVersion String
+  creditAmount    Decimal        @db.Decimal(15, 2)
+  termMonths      Int
+  adminFeeRate    Decimal        @db.Decimal(8, 6)
+  reserveFundRate Decimal        @db.Decimal(8, 6)
+  insuranceRate   Decimal        @db.Decimal(8, 6) @default(0)
+  adjustmentIndex String
+  signedAt        DateTime?
+  signatureMethod String?
+  signatureRef    String?
+  fileKey         String?
+  parentId        String?
+  parent          Contract?     @relation("ContractAmendments", fields: [parentId], references: [id])
+  amendments      Contract[]    @relation("ContractAmendments")
+  cancelledAt     DateTime?
+  cancelReason    String?
+  closedAt        DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([number])
+  @@index([quotaId])
+  @@index([customerId])
+  @@index([status])
+  @@map("contracts")
+}
+
+// ============================================================
+// DOMÍNIO: FINANCEIRO — PARCELAS
+// ============================================================
+
+model Installment {
+  id               String            @id @default(uuid())
+  quotaId          String
+  quota            Quota             @relation(fields: [quotaId], references: [id])
+  number           Int
+  dueDate          DateTime
+  status           InstallmentStatus @default(PENDING)
+  totalAmount      Decimal           @db.Decimal(15, 2)
+  commonFund       Decimal           @db.Decimal(15, 2)
+  adminFee         Decimal           @db.Decimal(15, 2)
+  reserveFund      Decimal           @db.Decimal(15, 2)
+  insurance        Decimal           @db.Decimal(15, 2) @default(0)
+  otherCharges     Decimal           @db.Decimal(15, 2) @default(0)
+  adjustmentFactor Decimal           @db.Decimal(10, 8) @default(1)
+  paidAmount       Decimal           @db.Decimal(15, 2) @default(0)
+  paidAt           DateTime?
+  lateFine         Decimal           @db.Decimal(15, 2) @default(0)
+  lateFeeAccrued   Decimal           @db.Decimal(15, 2) @default(0)
+  waivedAt         DateTime?
+  waivedBy         String?
+  waiveReason      String?
+  charges          Charge[]
+  paymentAllocations PaymentAllocation[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([quotaId, number])
+  @@index([quotaId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("installments")
+}
+
+// ============================================================
+// DOMÍNIO: FINANCEIRO — COBRANÇAS E PAGAMENTOS
+// ============================================================
+
+model Charge {
+  id               String       @id @default(uuid())
+  installmentId    String
+  installment      Installment  @relation(fields: [installmentId], references: [id])
+  status           ChargeStatus @default(PENDING)
+  method           PaymentMethod
+  amount           Decimal      @db.Decimal(15, 2)
+  dueDate          DateTime
+  barcode          String?
+  pixQrCode        String?
+  pixKey           String?
+  txId             String?      @unique
+  externalRef      String?
+  paidAt           DateTime?
+  paidAmount       Decimal?     @db.Decimal(15, 2)
+  cancelledAt      DateTime?
+  cancelReason     String?
+  expiresAt        DateTime?
+  webhookEvents    ChargeWebhookEvent[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([installmentId])
+  @@index([status])
+  @@index([txId])
+  @@map("charges")
+}
+
+model ChargeWebhookEvent {
+  id             String   @id @default(uuid())
+  chargeId       String
+  charge         Charge   @relation(fields: [chargeId], references: [id])
+  provider       String
+  eventType      String
+  payload        Json
+  processedAt    DateTime?
+  error          String?
+  idempotencyKey String   @unique
+  receivedAt     DateTime @default(now())
+
+  @@index([chargeId])
+  @@index([idempotencyKey])
+  @@map("charge_webhook_events")
+}
+
+model Payment {
+  id             String        @id @default(uuid())
+  status         PaymentStatus @default(PENDING)
+  method         PaymentMethod
+  amount         Decimal       @db.Decimal(15, 2)
+  confirmedAt    DateTime?
+  confirmedBy    String?
+  reversedAt     DateTime?
+  reversedBy     String?
+  reverseReason  String?
+  externalRef    String?
+  notes          String?
+  allocations    PaymentAllocation[]
+  journalEntry   JournalEntry? @relation(fields: [journalEntryId], references: [id])
+  journalEntryId String?       @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([status])
+  @@index([confirmedAt])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id              String      @id @default(uuid())
+  paymentId       String
+  payment         Payment     @relation(fields: [paymentId], references: [id])
+  installmentId   String
+  installment     Installment @relation(fields: [installmentId], references: [id])
+  allocatedAmount Decimal     @db.Decimal(15, 2)
+  allocatedTo     String
+  createdAt       DateTime    @default(now())
+
+  @@index([paymentId])
+  @@index([installmentId])
+  @@map("payment_allocations")
+}
+
+model BankReconciliation {
+  id             String   @id @default(uuid())
+  referenceDate  DateTime
+  bankStatement  Json
+  matchedCount   Int      @default(0)
+  unmatchedCount Int      @default(0)
+  reconciledAt   DateTime?
+  reconciledBy   String?
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  @@index([referenceDate])
+  @@map("bank_reconciliations")
+}
+
+// ============================================================
+// DOMÍNIO: CONTABILIDADE — RAZÃO CONTÁBIL (PARTIDAS DOBRADAS)
+// ============================================================
+
+model LedgerAccount {
+  id           String         @id @default(uuid())
+  code         String         @unique
+  name         String
+  description  String?
+  accountType  String
+  isActive     Boolean        @default(true)
+  parentId     String?
+  parent       LedgerAccount? @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children     LedgerAccount[] @relation("AccountHierarchy")
+  journalLines JournalLine[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([code])
+  @@map("ledger_accounts")
+}
+
+model JournalEntry {
+  id          String             @id @default(uuid())
+  number      String             @unique
+  date        DateTime
+  description String
+  status      JournalEntryStatus @default(PENDING)
+  groupId     String?
+  postedAt    DateTime?
+  postedBy    String?
+  reversedAt  DateTime?
+  reversedBy  String?
+  reverseRef  String?
+  lines       JournalLine[]
+  payment     Payment?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([date])
+  @@index([groupId])
+  @@index([status])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String        @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry  @relation(fields: [journalEntryId], references: [id])
+  accountId      String
+  account        LedgerAccount @relation(fields: [accountId], references: [id])
+  entryType      EntryType
+  amount         Decimal       @db.Decimal(15, 2)
+  description    String?
+  createdAt      DateTime      @default(now())
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@map("journal_lines")
+}
+
+// ============================================================
+// DOMÍNIO: ASSEMBLEIAS E CONTEMPLAÇÕES
+// ============================================================
+
+model Assembly {
+  id              String          @id @default(uuid())
+  groupId         String
+  group           ConsortiumGroup @relation(fields: [groupId], references: [id])
+  number          Int
+  scheduledDate   DateTime
+  status          AssemblyStatus  @default(SCHEDULED)
+  location        String?
+  minutesFileKey  String?
+  bidCloseAt      DateTime?
+  openedAt        DateTime?
+  closedAt        DateTime?
+  conductedBy     String?
+  attendanceCount Int             @default(0)
+  notes           String?
+  bids            Bid[]
+  draws           Draw[]
+  contemplations  Contemplation[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([groupId, number])
+  @@index([groupId])
+  @@index([status])
+  @@index([scheduledDate])
+  @@map("assemblies")
+}
+
+model Bid {
+  id           String    @id @default(uuid())
+  assemblyId   String
+  assembly     Assembly  @relation(fields: [assemblyId], references: [id])
+  quotaId      String
+  quota        Quota     @relation(fields: [quotaId], references: [id])
+  type         BidType
+  amount       Decimal   @db.Decimal(15, 2)
+  amountPct    Decimal   @db.Decimal(8, 4)
+  status       BidStatus @default(REGISTERED)
+  registeredAt DateTime  @default(now())
+  registeredBy String?
+  validatedAt  DateTime?
+  validatedBy  String?
+  notes        String?
+
+  @@index([assemblyId])
+  @@index([quotaId])
+  @@index([status])
+  @@map("bids")
+}
+
+model Draw {
+  id            String     @id @default(uuid())
+  assemblyId    String
+  assembly      Assembly   @relation(fields: [assemblyId], references: [id])
+  status        DrawStatus @default(PENDING)
+  algorithm     String
+  seed          String?
+  loteryNumber  String?
+  result        Json?
+  winnerQuotaId String?
+  auditedAt     DateTime?
+  auditedBy     String?
+  auditNotes    String?
+  executedAt    DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([assemblyId])
+  @@map("draws")
+}
+
+model Contemplation {
+  id               String              @id @default(uuid())
+  assemblyId       String
+  assembly         Assembly            @relation(fields: [assemblyId], references: [id])
+  quotaId          String
+  quota            Quota               @relation(fields: [quotaId], references: [id])
+  type             String
+  bidId            String?
+  bid              Bid?                @relation(fields: [bidId], references: [id])
+  status           ContemplationStatus @default(CONTEMPLATED_DRAW)
+  creditAmount     Decimal             @db.Decimal(15, 2)
+  confirmedAt      DateTime?
+  confirmedBy      String?
+  creditReleasedAt DateTime?
+  disbursement     CreditDisbursement?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([assemblyId])
+  @@index([quotaId])
+  @@map("contemplations")
+}
+
+model BidContemplationLink {
+  bidId           String @unique
+  contemplationId String @unique
+}
+
+// ============================================================
+// DOMÍNIO: CRÉDITO — ANÁLISE E LIBERAÇÃO
+// ============================================================
+
+model CreditAnalysis {
+  id              String               @id @default(uuid())
+  contemplationId String               @unique
+  contemplation   Contemplation        @relation(fields: [contemplationId], references: [id])
+  status          CreditAnalysisStatus @default(PENDING)
+  analystId       String?
+  score           Decimal?             @db.Decimal(5, 2)
+  recommendation  String?
+  documents       CreditAnalysisDocument[]
+  guarantees      Guarantee[]
+  approvals       ApprovalRequest[]
+  decidedAt       DateTime?
+  decisionNotes   String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([status])
+  @@map("credit_analyses")
+}
+
+model CreditAnalysisDocument {
+  id               String         @id @default(uuid())
+  creditAnalysisId String
+  creditAnalysis   CreditAnalysis @relation(fields: [creditAnalysisId], references: [id], onDelete: Cascade)
+  type             String
+  fileKey          String
+  verifiedAt       DateTime?
+  verifiedBy       String?
+  createdAt        DateTime       @default(now())
+
+  @@index([creditAnalysisId])
+  @@map("credit_analysis_documents")
+}
+
+model Guarantee {
+  id               String         @id @default(uuid())
+  creditAnalysisId String
+  creditAnalysis   CreditAnalysis @relation(fields: [creditAnalysisId], references: [id], onDelete: Cascade)
+  type             String
+  description      String
+  estimatedValue   Decimal        @db.Decimal(15, 2)
+  appraisalFileKey String?
+  registeredAt     DateTime?
+  registrationRef  String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([creditAnalysisId])
+  @@map("guarantees")
+}
+
+model CreditDisbursement {
+  id              String             @id @default(uuid())
+  contemplationId String             @unique
+  contemplation   Contemplation      @relation(fields: [contemplationId], references: [id])
+  status          DisbursementStatus @default(PENDING)
+  amount          Decimal            @db.Decimal(15, 2)
+  beneficiary     String
+  bankAccountId   String?
+  authorizedBy    String?
+  authorizedAt    DateTime?
+  processedAt     DateTime?
+  externalRef     String?
+  reversedAt      DateTime?
+  reverseReason   String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([status])
+  @@map("credit_disbursements")
+}
+
+model ApprovalRequest {
+  id               String          @id @default(uuid())
+  entityType       String
+  entityId         String
+  requestedBy      String
+  approverId       String?
+  approver         User?           @relation("ApproverUser", fields: [approverId], references: [id])
+  status           ApprovalStatus  @default(PENDING)
+  notes            String?
+  decidedAt        DateTime?
+  decisionNotes    String?
+  creditAnalysisId String?
+  creditAnalysis   CreditAnalysis? @relation(fields: [creditAnalysisId], references: [id])
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([status])
+  @@index([approverId])
+  @@map("approval_requests")
+}
+
+// ============================================================
+// DOMÍNIO: COMUNICAÇÃO
+// ============================================================
+
+model NotificationTemplate {
+  id        String              @id @default(uuid())
+  key       String              @unique
+  name      String
+  subject   String
+  bodyHtml  String
+  bodyText  String
+  channel   NotificationChannel
+  isActive  Boolean             @default(true)
+  variables Json?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@map("notification_templates")
+}
+
+model Notification {
+  id            String              @id @default(uuid())
+  customerId    String
+  customer      Customer            @relation(fields: [customerId], references: [id])
+  channel       NotificationChannel
+  status        NotificationStatus  @default(PENDING)
+  subject       String?
+  body          String
+  templateKey   String?
+  templateData  Json?
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  failureReason String?
+  externalRef   String?
+  createdAt     DateTime            @default(now())
+
+  @@index([customerId])
+  @@index([status])
+  @@map("notifications")
+}
+
+model SupportRequest {
+  id         String               @id @default(uuid())
+  customerId String
+  customer   Customer             @relation(fields: [customerId], references: [id])
+  subject    String
+  body       String
+  status     SupportRequestStatus @default(OPEN)
+  category   String?
+  priority   String               @default("NORMAL")
+  assignedTo String?
+  resolvedAt DateTime?
+  closedAt   DateTime?
+  messages   SupportMessage[]
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@map("support_requests")
+}
+
+model SupportMessage {
+  id               String         @id @default(uuid())
+  supportRequestId String
+  supportRequest   SupportRequest @relation(fields: [supportRequestId], references: [id], onDelete: Cascade)
+  authorId         String
+  isInternal       Boolean        @default(false)
+  body             String
+  fileKeys         Json?
+  createdAt        DateTime       @default(now())
+
+  @@index([supportRequestId])
+  @@map("support_messages")
+}
+
+// ============================================================
+// DOMÍNIO: REGULATÓRIO
+// ============================================================
+
+model RegulatoryReport {
+  id            String     @id @default(uuid())
+  type          ReportType
+  referenceDate DateTime
+  generatedAt   DateTime?
+  generatedBy   String?
+  fileKey       String?
+  status        String     @default("PENDING")
+  notes         String?
+  submissions   ReportSubmission[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([type])
+  @@index([referenceDate])
+  @@map("regulatory_reports")
+}
+
+model ReportSubmission {
+  id              String           @id @default(uuid())
+  reportId        String
+  report          RegulatoryReport @relation(fields: [reportId], references: [id])
+  submittedAt     DateTime
+  submittedBy     String
+  destination     String
+  protocol        String?
+  responseStatus  String?
+  responseDetails Json?
+  createdAt       DateTime         @default(now())
+
+  @@index([reportId])
+  @@map("report_submissions")
+}
