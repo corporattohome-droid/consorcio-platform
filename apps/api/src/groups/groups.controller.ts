@@ -20,8 +20,8 @@ export class GroupsController {
 
   @Get() @Roles(UserRole.CASHIER)
   @ApiOperation({ summary: 'Listar grupos' })
-  async findAll(@Query('page') page?: number, @Query('limit') limit?: number, @Query('status') status?: GroupStatus, @Query('category') category?: string) {
-    return this.groupsService.findAll({ page, limit, status, category })
+  async findAll(@Query('page') page?: number, @Query('limit') limit?: number, @Query('status') status?: GroupStatus) {
+    return this.groupsService.findAll({ page, limit, status })
   }
 
   @Get(':id') @Roles(UserRole.CASHIER)

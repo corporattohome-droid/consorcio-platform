@@ -276,7 +276,7 @@ model UserSession {
 }
 
 model AuditLog {
-  id           String   @id @default(uuid())
+  id           String   @id @default(uuid())  
   userId       String?
   user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   action       String
@@ -327,6 +327,7 @@ model Customer {
   kycChecks         KycCheck[]
   contracts         Contract[]
   quotaOwnerships   QuotaOwnershipHistory[]
+  quotas            Quota[]
   notifications     Notification[]
   supportRequests   SupportRequest[]
   user              User?
@@ -554,14 +555,14 @@ model Contract {
   signatureMethod String?
   signatureRef    String?
   fileKey         String?
-  parentId        String?
-  parent          Contract?     @relation("ContractAmendments", fields: [parentId], references: [id])
-  amendments      Contract[]    @relation("ContractAmendments")
+  parentId        String?        @unique
+  parent          Contract?      @relation("ContractAmendments", fields: [parentId], references: [id])
+  amendments      Contract[]     @relation("ContractAmendments")
   cancelledAt     DateTime?
   cancelReason    String?
   closedAt        DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   @@index([number])
   @@index([quotaId])
@@ -803,20 +804,21 @@ model Assembly {
 }
 
 model Bid {
-  id           String    @id @default(uuid())
-  assemblyId   String
-  assembly     Assembly  @relation(fields: [assemblyId], references: [id])
-  quotaId      String
-  quota        Quota     @relation(fields: [quotaId], references: [id])
-  type         BidType
-  amount       Decimal   @db.Decimal(15, 2)
-  amountPct    Decimal   @db.Decimal(8, 4)
-  status       BidStatus @default(REGISTERED)
-  registeredAt DateTime  @default(now())
-  registeredBy String?
-  validatedAt  DateTime?
-  validatedBy  String?
-  notes        String?
+  id            String         @id @default(uuid())
+  assemblyId    String
+  assembly      Assembly       @relation(fields: [assemblyId], references: [id])
+  quotaId       String
+  quota         Quota          @relation(fields: [quotaId], references: [id])
+  type          BidType
+  amount        Decimal        @db.Decimal(15, 2)
+  amountPct     Decimal        @db.Decimal(8, 4)
+  status        BidStatus      @default(REGISTERED)
+  registeredAt  DateTime       @default(now())
+  registeredBy  String?
+  validatedAt   DateTime?
+  validatedBy   String?
+  notes         String?
+  contemplation Contemplation?
 
   @@index([assemblyId])
   @@index([quotaId])
@@ -852,7 +854,7 @@ model Contemplation {
   quotaId          String
   quota            Quota               @relation(fields: [quotaId], references: [id])
   type             String
-  bidId            String?
+  bidId            String?             @unique
   bid              Bid?                @relation(fields: [bidId], references: [id])
   status           ContemplationStatus @default(CONTEMPLATED_DRAW)
   creditAmount     Decimal             @db.Decimal(15, 2)
@@ -860,17 +862,13 @@ model Contemplation {
   confirmedBy      String?
   creditReleasedAt DateTime?
   disbursement     CreditDisbursement?
+  creditAnalysis   CreditAnalysis?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
   @@index([assemblyId])
   @@index([quotaId])
   @@map("contemplations")
-}
-
-model BidContemplationLink {
-  bidId           String @unique
-  contemplationId String @unique
 }
 
 // ============================================================
@@ -1060,7 +1058,7 @@ model RegulatoryReport {
   generatedBy   String?
   fileKey       String?
   status        String     @default("PENDING")
-  notes         String?
+  notes         String?  
   submissions   ReportSubmission[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt

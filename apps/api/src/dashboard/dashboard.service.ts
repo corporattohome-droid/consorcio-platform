@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../shared/prisma/prisma.service'
 import { subMonths, startOfMonth, endOfMonth, format } from 'date-fns'
 import Decimal from 'decimal.js'
@@ -27,20 +27,20 @@ export class DashboardService {
       this.prisma.quota.count({ where: { contemplationStatus: { not: 'NOT_CONTEMPLATED' } } }),
       this.prisma.installment.count({ where: { status: 'OVERDUE' } }),
       this.prisma.payment.aggregate({
-        where: { paidAt: { gte: startOfCurrentMonth, lte: endOfCurrentMonth }, status: 'CONFIRMED' },
+        where: { confirmedAt: { gte: startOfCurrentMonth, lte: endOfCurrentMonth }, status: 'CONFIRMED' },
         _sum: { amount: true },
       }),
-      this.prisma.contemplation.count({ where: { status: { in: ['APPROVED', 'CREDIT_RELEASED'] } } }),
+      this.prisma.contemplation.count({ where: { status: { in: ['CREDIT_RELEASED', 'COMPLETED'] } } }),
       this.prisma.assembly.findFirst({
-        where: { scheduledAt: { gte: now }, status: 'SCHEDULED' },
-        orderBy: { scheduledAt: 'asc' },
-        select: { scheduledAt: true, group: { select: { code: true } } },
+        where: { scheduledDate: { gte: now }, status: 'SCHEDULED' },
+        orderBy: { scheduledDate: 'asc' },
+        select: { scheduledDate: true, group: { select: { code: true } } },
       }),
     ])
 
     const monthlyEvolution = await this.getMonthlyEvolution()
     const delinquencyByGroup = await this.getDelinquencyByGroup()
-    const categoryDistribution = await this.getCategoryDistribution()
+    const statusDistribution = await this.getStatusDistribution()
 
     return {
       customers: { total: totalCustomers, active: activeCustomers },
@@ -54,7 +54,7 @@ export class DashboardService {
       nextAssembly,
       monthlyEvolution,
       delinquencyByGroup,
-      categoryDistribution,
+      statusDistribution,
     }
   }
 
@@ -64,13 +64,13 @@ export class DashboardService {
     const endOfCurrentMonth = endOfMonth(now)
 
     const contracts = await this.prisma.contract.findMany({
-      where: { customerId, status: { in: ['ACTIVE', 'SIGNED'] } },
-      include: { quota: { select: { id: true, creditValue: true } } },
+      where: { customerId, status: { in: ['ACTIVE', 'PENDING_SIGNATURE'] } },
+      include: { quota: { select: { id: true, group: { select: { creditAmount: true } } } } },
     })
 
     const quotaIds = contracts.map((c) => c.quota.id)
     const totalCreditValue = contracts.reduce(
-      (sum, c) => sum.plus(new Decimal(c.quota.creditValue)), new Decimal(0)
+      (sum, c) => sum.plus(new Decimal(c.quota.group.creditAmount)), new Decimal(0)
     ).toNumber()
 
     const [installmentsDueThisMonth, upcomingInstallments, nextAssembly] = await Promise.all([
@@ -81,12 +81,16 @@ export class DashboardService {
         where: { quotaId: { in: quotaIds }, status: { in: ['PENDING', 'OVERDUE'] } },
         orderBy: { dueDate: 'asc' },
         take: 5,
-        select: { id: true, installmentNumber: true, totalAmount: true, dueDate: true, status: true },
+        select: { id: true, number: true, totalAmount: true, dueDate: true, status: true },
       }),
       this.prisma.assembly.findFirst({
-        where: { scheduledAt: { gte: now }, status: 'SCHEDULED', group: { quotas: { some: { id: { in: quotaIds } } } } },
-        orderBy: { scheduledAt: 'asc' },
-        select: { scheduledAt: true },
+        where: {
+          scheduledDate: { gte: now },
+          status: 'SCHEDULED',
+          group: { quotas: { some: { id: { in: quotaIds } } } },
+        },
+        orderBy: { scheduledDate: 'asc' },
+        select: { scheduledDate: true },
       }),
     ])
 
@@ -94,7 +98,7 @@ export class DashboardService {
       totalQuotas: quotaIds.length,
       totalCreditValue,
       installmentsDueThisMonth,
-      nextAssemblyDate: nextAssembly?.scheduledAt,
+      nextAssemblyDate: nextAssembly?.scheduledDate,
       upcomingInstallments,
     }
   }
@@ -107,7 +111,7 @@ export class DashboardService {
         const end = endOfMonth(month)
         const [payments, newCustomers, newContracts] = await Promise.all([
           this.prisma.payment.aggregate({
-            where: { paidAt: { gte: start, lte: end }, status: 'CONFIRMED' },
+            where: { confirmedAt: { gte: start, lte: end }, status: 'CONFIRMED' },
             _sum: { amount: true },
           }),
           this.prisma.customer.count({ where: { createdAt: { gte: start, lte: end } } }),
@@ -139,11 +143,14 @@ export class DashboardService {
     )
   }
 
-  private async getCategoryDistribution() {
-    return this.prisma.consortiumGroup.groupBy({
-      by: ['category'],
-      _count: { category: true },
-      _sum: { totalQuotas: true },
+  private async getStatusDistribution() {
+    const groups = await this.prisma.consortiumGroup.findMany({
+      select: { status: true },
     })
+    const counts: Record<string, number> = {}
+    for (const g of groups) {
+      counts[g.status] = (counts[g.status] ?? 0) + 1
+    }
+    return Object.entries(counts).map(([status, count]) => ({ status, count }))
   }
 }
