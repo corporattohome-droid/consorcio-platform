@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 244 246 250;
+    --foreground: 15 23 42;
+    --card: 255 255 255;
+    --card-foreground: 15 23 42;
+    --primary: 37 99 235;
+    --primary-foreground: 255 255 255;
+    --muted: 232 236 244;
+    --muted-foreground: 100 116 139;
+    --border: 226 232 240;
+    --radius: 0.75rem;
+    --sidebar-width: 260px;
+  }
+
+  .dark {
+    --background: 11 23 48;
+    --foreground: 241 245 249;
+    --card: 15 30 60;
+    --card-foreground: 241 245 249;
+    --primary: 59 130 246;
+    --muted: 30 42 59;
+    --muted-foreground: 148 163 184;
+    --border: 30 42 59;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white dark:bg-neutral-800 rounded-xl border border-gray-100 dark:border-neutral-700 shadow-card;
+  }
+
+  .btn-primary {
+    @apply bg-brand-primary hover:bg-brand-dark text-white font-medium px-4 py-2 rounded-lg transition-colors duration-150;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-gray-100 dark:hover:bg-neutral-800 text-gray-600 dark:text-gray-400 font-medium px-3 py-2 rounded-lg transition-colors duration-150;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent;
+  }
+
+  .badge-green {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400;
+  }
+
+  .badge-red {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400;
+  }
+
+  .badge-blue {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400;
+  }
+
+  .badge-yellow {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400;
+  }
+}
