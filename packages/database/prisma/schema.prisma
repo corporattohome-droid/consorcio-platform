@@ -276,7 +276,7 @@ model UserSession {
 }
 
 model AuditLog {
-  id           String   @id @default(uuid())
+  id           String   @id @default(uuid())  
   userId       String?
   user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   action       String
@@ -555,14 +555,14 @@ model Contract {
   signatureMethod String?
   signatureRef    String?
   fileKey         String?
-  parentId        String?
-  parent          Contract?     @relation("ContractAmendments", fields: [parentId], references: [id])
-  amendments      Contract[]    @relation("ContractAmendments")
+  parentId        String?        @unique
+  parent          Contract?      @relation("ContractAmendments", fields: [parentId], references: [id])
+  amendments      Contract[]     @relation("ContractAmendments")
   cancelledAt     DateTime?
   cancelReason    String?
   closedAt        DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   @@index([number])
   @@index([quotaId])
@@ -854,7 +854,7 @@ model Contemplation {
   quotaId          String
   quota            Quota               @relation(fields: [quotaId], references: [id])
   type             String
-  bidId            String?
+  bidId            String?             @unique
   bid              Bid?                @relation(fields: [bidId], references: [id])
   status           ContemplationStatus @default(CONTEMPLATED_DRAW)
   creditAmount     Decimal             @db.Decimal(15, 2)
@@ -1058,7 +1058,7 @@ model RegulatoryReport {
   generatedBy   String?
   fileKey       String?
   status        String     @default("PENDING")
-  notes         String?
+  notes         String?  
   submissions   ReportSubmission[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
