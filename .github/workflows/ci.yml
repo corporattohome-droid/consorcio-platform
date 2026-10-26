@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @consorcio/database generate
+
+      - name: Typecheck (API)
+        run: pnpm --filter api exec tsc --noEmit
+
+      - name: Typecheck (Admin)
+        run: pnpm --filter admin exec tsc --noEmit
+
+      - name: Typecheck (Client)
+        run: pnpm --filter client exec tsc --noEmit
+
+  test-api:
+    name: API Unit Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: consorcio
+          POSTGRES_PASSWORD: consorcio_dev
+          POSTGRES_DB: consorcio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://consorcio:consorcio_dev@localhost:5432/consorcio_test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-jwt-secret-min-32-chars-long
+      JWT_REFRESH_SECRET: ci-test-refresh-secret-min-32-chars
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @consorcio/database generate
+
+      - name: Push DB schema (test)
+        run: pnpm --filter @consorcio/database db:push
+
+      - name: Run API unit tests
+        run: pnpm --filter api test --passWithNoTests
+
+      - name: Run API e2e tests
+        run: pnpm --filter api test:e2e --passWithNoTests
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
