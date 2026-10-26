@@ -1,188 +1,258 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common'
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../shared/prisma/prisma.service'
-import { Prisma } from '@prisma/client'
+import { JournalEntryStatus, EntryType } from '@prisma/client'
 import Decimal from 'decimal.js'
 
-export interface CreateJournalEntryDto {
-  description: string
-  entryDate: string
-  type: string
-  reference?: string
-  lines: Array<{
-    accountId: string
-    side: 'DEBIT' | 'CREDIT'
-    amount: number
-    description?: string
-  }>
+Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP })
+
+interface JournalLineInput {
+  accountId: string
+  entryType: EntryType
+  amount: number
+  description?: string
 }
 
 @Injectable()
 export class AccountingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {}
 
-  async getJournalEntries(params: { page?: number; limit?: number } = {}) {
-    const { page = 1, limit = 25 } = params
+  async findAllEntries(params: {
+    groupId?: string
+    status?: JournalEntryStatus
+    page?: number
+    limit?: number
+  }) {
+    const page = params.page ?? 1
+    const limit = Math.min(params.limit ?? 20, 100)
     const skip = (page - 1) * limit
+    const where: any = {}
+    if (params.groupId) where.groupId = params.groupId
+    if (params.status) where.status = params.status
 
-    const [items, total] = await Promise.all([
+    const [total, data] = await Promise.all([
+      this.prisma.journalEntry.count({ where }),
       this.prisma.journalEntry.findMany({
+        where,
         skip,
         take: limit,
-        orderBy: { entryDate: 'desc' },
+        orderBy: { date: 'desc' },
         include: {
-          lines: {
-            include: {
-              account: { select: { id: true, code: true, name: true } },
-            },
-          },
+          lines: { include: { account: { select: { code: true, name: true } } } },
         },
       }),
-      this.prisma.journalEntry.count(),
     ])
-
-    return { items, total, page, limit }
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } }
   }
 
-  async getJournalEntry(id: string) {
+  async findOneEntry(id: string) {
     const entry = await this.prisma.journalEntry.findUnique({
       where: { id },
       include: {
-        lines: {
-          include: { account: true },
-        },
+        lines: { include: { account: { select: { code: true, name: true, accountType: true } } } },
       },
     })
-    if (!entry) throw new NotFoundException('Journal entry not found')
+    if (!entry) throw new NotFoundException(`Lançamento ${id} não encontrado`)
     return entry
   }
 
-  async createJournalEntry(dto: CreateJournalEntryDto) {
-    // Validate double-entry: total debits must equal total credits
-    const debitTotal = dto.lines
-      .filter((l) => l.side === 'DEBIT')
-      .reduce((sum, l) => sum.plus(new Decimal(l.amount)), new Decimal(0))
-    const creditTotal = dto.lines
-      .filter((l) => l.side === 'CREDIT')
-      .reduce((sum, l) => sum.plus(new Decimal(l.amount)), new Decimal(0))
-
-    if (!debitTotal.equals(creditTotal)) {
+  async createEntry(data: {
+    date: Date
+    description: string
+    groupId?: string
+    lines: JournalLineInput[]
+  }) {
+    const debits = data.lines
+      .filter((l) => l.entryType === EntryType.DEBIT)
+      .reduce((s, l) => s.plus(new Decimal(l.amount)), new Decimal(0))
+    const credits = data.lines
+      .filter((l) => l.entryType === EntryType.CREDIT)
+      .reduce((s, l) => s.plus(new Decimal(l.amount)), new Decimal(0))
+    if (!debits.equals(credits)) {
       throw new BadRequestException(
-        `Double-entry imbalance: debits ${debitTotal.toFixed(2)} ≠ credits ${creditTotal.toFixed(2)}`,
+        `Partidas devem ser iguais: débitos R$ ${debits.toFixed(2)} ≠ créditos R$ ${credits.toFixed(2)}`,
       )
     }
+    if (data.lines.length < 2) {
+      throw new BadRequestException('Um lançamento requer no mínimo duas linhas (partida dobrada)')
+    }
+
+    const number = await this.generateEntryNumber()
 
     return this.prisma.journalEntry.create({
       data: {
-        description: dto.description,
-        entryDate: new Date(dto.entryDate),
-        type: dto.type,
-        reference: dto.reference,
-        status: 'DRAFT',
+        number,
+        date: data.date,
+        description: data.description,
+        groupId: data.groupId,
+        status: JournalEntryStatus.PENDING,
         lines: {
-          create: dto.lines.map((l) => ({
+          create: data.lines.map((l) => ({
             accountId: l.accountId,
-            side: l.side,
-            amount: l.amount,
+            entryType: l.entryType,
+            amount: new Decimal(l.amount).toDecimalPlaces(2).toString(),
             description: l.description,
           })),
         },
       },
-      include: { lines: { include: { account: true } } },
+      include: {
+        lines: { include: { account: { select: { code: true, name: true } } } },
+      },
     })
   }
 
-  async postJournalEntry(id: string) {
+  async postEntry(id: string, postedBy: string) {
+    const entry = await this.prisma.journalEntry.findUnique({ where: { id } })
+    if (!entry) throw new NotFoundException('Lançamento contábil não encontrado')
+    if (entry.status !== JournalEntryStatus.PENDING) {
+      throw new ConflictException('Apenas lançamentos pendentes podem ser postados')
+    }
+    return this.prisma.journalEntry.update({
+      where: { id },
+      data: { status: JournalEntryStatus.POSTED, postedAt: new Date(), postedBy },
+    })
+  }
+
+  async reverseEntry(id: string, reversedBy: string) {
     const entry = await this.prisma.journalEntry.findUnique({
       where: { id },
-      include: { lines: { include: { account: true } } },
+      include: { lines: true },
     })
-    if (!entry) throw new NotFoundException('Journal entry not found')
-    if (entry.status !== 'DRAFT') {
-      throw new BadRequestException(`Entry status ${entry.status} cannot be posted`)
+    if (!entry) throw new NotFoundException('Lançamento contábil não encontrado')
+    if (entry.status !== JournalEntryStatus.POSTED) {
+      throw new ConflictException('Apenas lançamentos postados podem ser estornados')
     }
 
-    // Post the entry and update ledger account balances atomically
-    return this.prisma.$transaction(async (tx) => {
-      for (const line of entry.lines) {
-        const account = await tx.ledgerAccount.findUnique({ where: { id: line.accountId } })
-        if (!account) throw new NotFoundException(`Account ${line.accountId} not found`)
-
-        // Normal balance logic: ASSET/EXPENSE increase on DEBIT; LIABILITY/EQUITY/REVENUE on CREDIT
-        const normalDebitTypes = ['ASSET', 'EXPENSE']
-        const isNormalBalance = normalDebitTypes.includes(account.type)
-        const amount = new Decimal(String(line.amount))
-        const current = new Decimal(String(account.balance))
-
-        let newBalance: Decimal
-        if (line.side === 'DEBIT') {
-          newBalance = isNormalBalance ? current.plus(amount) : current.minus(amount)
-        } else {
-          newBalance = isNormalBalance ? current.minus(amount) : current.plus(amount)
-        }
-
-        await tx.ledgerAccount.update({
-          where: { id: line.accountId },
-          data: { balance: newBalance.toDecimalPlaces(2).toNumber() },
-        })
-      }
-
-      return tx.journalEntry.update({
-        where: { id },
-        data: { status: 'POSTED', postedAt: new Date() },
-        include: { lines: { include: { account: true } } },
-      })
-    })
-  }
-
-  async getLedgerAccounts() {
-    return this.prisma.ledgerAccount.findMany({
-      orderBy: { code: 'asc' },
-    })
-  }
-
-  async getLedgerAccount(id: string) {
-    const account = await this.prisma.ledgerAccount.findUnique({
-      where: { id },
-      include: {
+    const number = await this.generateEntryNumber()
+    const reversal = await this.prisma.journalEntry.create({
+      data: {
+        number,
+        date: new Date(),
+        description: `ESTORNO: ${entry.description}`,
+        groupId: entry.groupId,
+        status: JournalEntryStatus.POSTED,
+        postedAt: new Date(),
+        postedBy: reversedBy,
         lines: {
-          include: { entry: true },
-          orderBy: { entry: { entryDate: 'desc' } },
-          take: 50,
+          create: entry.lines.map((l) => ({
+            accountId: l.accountId,
+            entryType: l.entryType === EntryType.DEBIT ? EntryType.CREDIT : EntryType.DEBIT,
+            amount: l.amount.toString(),
+            description: l.description,
+          })),
         },
       },
     })
-    if (!account) throw new NotFoundException('Ledger account not found')
-    return account
+
+    await this.prisma.journalEntry.update({
+      where: { id },
+      data: { status: JournalEntryStatus.REVERSED, reversedAt: new Date(), reversedBy, reverseRef: reversal.id },
+    })
+
+    return reversal
+  }
+
+  async findAllAccounts(params: { isActive?: boolean }) {
+    return this.prisma.ledgerAccount.findMany({
+      where: params.isActive !== undefined ? { isActive: params.isActive } : undefined,
+      orderBy: { code: 'asc' },
+      include: {
+        children: { select: { id: true, code: true, name: true, accountType: true } },
+      },
+    })
+  }
+
+  async findAccount(id: string) {
+    const account = await this.prisma.ledgerAccount.findUnique({
+      where: { id },
+      include: {
+        journalLines: {
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: {
+            journalEntry: { select: { number: true, date: true, description: true, status: true } },
+          },
+        },
+      },
+    })
+    if (!account) throw new NotFoundException(`Conta contábil ${id} não encontrada`)
+
+    const [debitAgg, creditAgg] = await Promise.all([
+      this.prisma.journalLine.aggregate({
+        where: {
+          accountId: id,
+          entryType: EntryType.DEBIT,
+          journalEntry: { status: JournalEntryStatus.POSTED },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.journalLine.aggregate({
+        where: {
+          accountId: id,
+          entryType: EntryType.CREDIT,
+          journalEntry: { status: JournalEntryStatus.POSTED },
+        },
+        _sum: { amount: true },
+      }),
+    ])
+
+    const debits = new Decimal(debitAgg._sum.amount?.toString() ?? '0')
+    const credits = new Decimal(creditAgg._sum.amount?.toString() ?? '0')
+    const computedBalance = debits.minus(credits)
+
+    return {
+      ...account,
+      accountType: account.accountType,
+      computedBalance: computedBalance.toString(),
+    }
   }
 
   async getTrialBalance() {
     const accounts = await this.prisma.ledgerAccount.findMany({
+      where: { isActive: true },
+      select: { id: true, code: true, name: true, accountType: true },
       orderBy: { code: 'asc' },
     })
 
-    const debitTypes = ['ASSET', 'EXPENSE']
-    let totalDebits = new Decimal(0)
-    let totalCredits = new Decimal(0)
+    return Promise.all(
+      accounts.map(async (account) => {
+        const [debitAgg, creditAgg] = await Promise.all([
+          this.prisma.journalLine.aggregate({
+            where: {
+              accountId: account.id,
+              entryType: EntryType.DEBIT,
+              journalEntry: { status: JournalEntryStatus.POSTED },
+            },
+            _sum: { amount: true },
+          }),
+          this.prisma.journalLine.aggregate({
+            where: {
+              accountId: account.id,
+              entryType: EntryType.CREDIT,
+              journalEntry: { status: JournalEntryStatus.POSTED },
+            },
+            _sum: { amount: true },
+          }),
+        ])
+        const debits = new Decimal(debitAgg._sum.amount?.toString() ?? '0')
+        const credits = new Decimal(creditAgg._sum.amount?.toString() ?? '0')
+        return {
+          id: account.id,
+          code: account.code,
+          name: account.name,
+          accountType: account.accountType,
+          debits: debits.toString(),
+          credits: credits.toString(),
+          balance: debits.minus(credits).toString(),
+        }
+      }),
+    )
+  }
 
-    const rows = accounts.map((acc) => {
-      const balance = new Decimal(String(acc.balance))
-      const isDebitNormal = debitTypes.includes(acc.type)
-      const debit = isDebitNormal && balance.gt(0) ? balance : new Decimal(0)
-      const credit = !isDebitNormal && balance.gt(0) ? balance : new Decimal(0)
-      totalDebits = totalDebits.plus(debit)
-      totalCredits = totalCredits.plus(credit)
-      return { ...acc, debit: debit.toNumber(), credit: credit.toNumber() }
+  private async generateEntryNumber(): Promise<string> {
+    const year = new Date().getFullYear()
+    const count = await this.prisma.journalEntry.count({
+      where: { createdAt: { gte: new Date(`${year}-01-01`) } },
     })
-
-    return {
-      rows,
-      totalDebits: totalDebits.toNumber(),
-      totalCredits: totalCredits.toNumber(),
-      balanced: totalDebits.equals(totalCredits),
-    }
+    return `LCT-${year}-${String(count + 1).padStart(6, '0')}`
   }
 }
