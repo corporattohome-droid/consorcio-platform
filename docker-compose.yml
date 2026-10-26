@@ -1,0 +1,185 @@
+version: '3.9'
+
+services:
+  # ─── PostgreSQL ───────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: consorcio_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-consorcio_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-consorcio_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-consorcio_db}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-consorcio_user} -d ${POSTGRES_DB:-consorcio_db}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - consorcio_net
+
+  # ─── Redis ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: consorcio_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - consorcio_net
+
+  # ─── Keycloak (Autenticação) ──────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: consorcio_keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin123}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-consorcio_db}
+      KC_DB_USERNAME: ${POSTGRES_USER:-consorcio_user}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-consorcio_pass}
+      KC_DB_SCHEMA: keycloak
+      KC_HOSTNAME_STRICT: 'false'
+      KC_HTTP_ENABLED: 'true'
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./infrastructure/docker/keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'exec 3<>/dev/tcp/127.0.0.1/8080; echo -e "GET /health/ready HTTP/1.1\r\nhost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; cat <&3 | grep -q "200 OK"']
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - consorcio_net
+
+  # ─── MailHog (E-mail dev) ─────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: consorcio_mailhog
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    networks:
+      - consorcio_net
+
+  # ─── LocalStack (S3 simulado) ─────────────────────────────
+  localstack:
+    image: localstack/localstack:3.4
+    container_name: consorcio_localstack
+    restart: unless-stopped
+    ports:
+      - '4566:4566'
+    environment:
+      SERVICES: s3
+      DEFAULT_REGION: us-east-1
+      LOCALSTACK_AUTH_TOKEN: ''
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - ./infrastructure/docker/localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
+    networks:
+      - consorcio_net
+
+  # ─── API NestJS ───────────────────────────────────────────
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: development
+    container_name: consorcio_api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-consorcio_user}:${POSTGRES_PASSWORD:-consorcio_pass}@postgres:5432/${POSTGRES_DB:-consorcio_db}?schema=public
+      REDIS_URL: redis://redis:6379
+      KEYCLOAK_URL: http://keycloak:8080
+    ports:
+      - '3001:3001'
+    volumes:
+      - ./apps/api:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - consorcio_net
+    profiles:
+      - full
+
+  # ─── Admin Next.js ────────────────────────────────────────
+  admin:
+    build:
+      context: ./apps/admin
+      dockerfile: Dockerfile
+      target: development
+    container_name: consorcio_admin
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./apps/admin:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    networks:
+      - consorcio_net
+    profiles:
+      - full
+
+  # ─── Client Portal Next.js ────────────────────────────────
+  client:
+    build:
+      context: ./apps/client
+      dockerfile: Dockerfile
+      target: development
+    container_name: consorcio_client
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - '3002:3002'
+    volumes:
+      - ./apps/client:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    networks:
+      - consorcio_net
+    profiles:
+      - full
+
+volumes:
+  postgres_data:
+  redis_data:
+  localstack_data:
+
+networks:
+  consorcio_net:
+    driver: bridge
