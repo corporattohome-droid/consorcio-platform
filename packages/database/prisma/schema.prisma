@@ -327,6 +327,7 @@ model Customer {
   kycChecks         KycCheck[]
   contracts         Contract[]
   quotaOwnerships   QuotaOwnershipHistory[]
+  quotas            Quota[]
   notifications     Notification[]
   supportRequests   SupportRequest[]
   user              User?
@@ -803,20 +804,21 @@ model Assembly {
 }
 
 model Bid {
-  id           String    @id @default(uuid())
-  assemblyId   String
-  assembly     Assembly  @relation(fields: [assemblyId], references: [id])
-  quotaId      String
-  quota        Quota     @relation(fields: [quotaId], references: [id])
-  type         BidType
-  amount       Decimal   @db.Decimal(15, 2)
-  amountPct    Decimal   @db.Decimal(8, 4)
-  status       BidStatus @default(REGISTERED)
-  registeredAt DateTime  @default(now())
-  registeredBy String?
-  validatedAt  DateTime?
-  validatedBy  String?
-  notes        String?
+  id            String         @id @default(uuid())
+  assemblyId    String
+  assembly      Assembly       @relation(fields: [assemblyId], references: [id])
+  quotaId       String
+  quota         Quota          @relation(fields: [quotaId], references: [id])
+  type          BidType
+  amount        Decimal        @db.Decimal(15, 2)
+  amountPct     Decimal        @db.Decimal(8, 4)
+  status        BidStatus      @default(REGISTERED)
+  registeredAt  DateTime       @default(now())
+  registeredBy  String?
+  validatedAt   DateTime?
+  validatedBy   String?
+  notes         String?
+  contemplation Contemplation?
 
   @@index([assemblyId])
   @@index([quotaId])
@@ -860,17 +862,13 @@ model Contemplation {
   confirmedBy      String?
   creditReleasedAt DateTime?
   disbursement     CreditDisbursement?
+  creditAnalysis   CreditAnalysis?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
   @@index([assemblyId])
   @@index([quotaId])
   @@map("contemplations")
-}
-
-model BidContemplationLink {
-  bidId           String @unique
-  contemplationId String @unique
 }
 
 // ============================================================
