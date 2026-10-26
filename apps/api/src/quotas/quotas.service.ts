@@ -14,16 +14,16 @@ export class QuotasService {
     if (params.groupId) where.groupId = params.groupId
     if (params.status) where.status = params.status
     if (params.customerId) {
-      where.contracts = { some: { customerId: params.customerId, status: { in: ['ACTIVE', 'SIGNED'] } } }
+      where.contracts = { some: { customerId: params.customerId, status: { in: ['ACTIVE', 'PENDING_SIGNATURE'] } } }
     }
     const [total, data] = await Promise.all([
       this.prisma.quota.count({ where }),
       this.prisma.quota.findMany({
         where, skip, take: limit, orderBy: { quotaNumber: 'asc' },
         include: {
-          group: { select: { code: true, name: true, category: true } },
+          group: { select: { code: true, name: true } },
           contracts: {
-            where: { status: { in: ['ACTIVE', 'SIGNED'] } },
+            where: { status: { in: ['ACTIVE', 'PENDING_SIGNATURE'] } },
             select: { customerId: true, customer: { select: { fullName: true, taxIdMasked: true } } },
             take: 1,
           },
@@ -38,7 +38,7 @@ export class QuotasService {
       where: { id },
       include: {
         group: true,
-        installments: { orderBy: { installmentNumber: 'asc' }, take: 5 },
+        installments: { orderBy: { number: 'asc' }, take: 5 },
         contracts: {
           include: { customer: { select: { fullName: true, taxIdMasked: true, email: true } } },
           orderBy: { createdAt: 'desc' },
@@ -49,7 +49,7 @@ export class QuotasService {
     return quota
   }
 
-  async assignToCustomer(quotaId: string, customerId: string, operatorId: string) {
+  async assignToCustomer(quotaId: string, customerId: string, _operatorId: string) {
     const [quota, customer] = await Promise.all([
       this.prisma.quota.findUnique({ where: { id: quotaId } }),
       this.prisma.customer.findUnique({ where: { id: customerId } }),
@@ -65,13 +65,19 @@ export class QuotasService {
         where: { id: quotaId }, data: { status: QuotaStatus.RESERVED },
       })
       await tx.quotaOwnershipHistory.create({
-        data: { quotaId, customerId, transferredById: operatorId, reason: 'ASSIGNMENT' },
+        data: {
+          quotaId,
+          customerId,
+          transferType: 'ASSIGNMENT',
+          startDate: new Date(),
+          transferFee: '0',
+        },
       })
       return tx.quota.findUnique({ where: { id: quotaId }, include: { group: true } })
     })
   }
 
-  async transfer(quotaId: string, toCustomerId: string, reason: string, operatorId: string) {
+  async transfer(quotaId: string, toCustomerId: string, reason: string, _operatorId: string) {
     const quota = await this.prisma.quota.findUnique({
       where: { id: quotaId },
       include: { installments: { where: { status: 'OVERDUE' } } },
@@ -83,11 +89,17 @@ export class QuotasService {
 
     return this.prisma.$transaction(async (tx) => {
       await tx.quotaOwnershipHistory.updateMany({
-        where: { quotaId, leftAt: null },
-        data: { leftAt: new Date() },
+        where: { quotaId, endDate: null },
+        data: { endDate: new Date() },
       })
       await tx.quotaOwnershipHistory.create({
-        data: { quotaId, customerId: toCustomerId, transferredById: operatorId, reason },
+        data: {
+          quotaId,
+          customerId: toCustomerId,
+          transferType: reason,
+          startDate: new Date(),
+          transferFee: '0',
+        },
       })
       return tx.quota.findUnique({ where: { id: quotaId } })
     })
