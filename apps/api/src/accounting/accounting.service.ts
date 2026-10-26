@@ -100,7 +100,7 @@ export class AccountingService {
     })
   }
 
-  async postJournalEntry(id: string, postedBy: string) {
+  async postJournalEntry(id: string, postedBy?: string) {
     const entry = await this.prisma.journalEntry.findUnique({ where: { id } })
     if (!entry) throw new NotFoundException('Lançamento contábil não encontrado')
     if (entry.status !== JournalEntryStatus.PENDING) {
@@ -108,11 +108,11 @@ export class AccountingService {
     }
     return this.prisma.journalEntry.update({
       where: { id },
-      data: { status: JournalEntryStatus.POSTED, postedAt: new Date(), postedBy },
+      data: { status: JournalEntryStatus.POSTED, postedAt: new Date(), postedBy: postedBy ?? 'system' },
     })
   }
 
-  async reverseJournalEntry(id: string, reversedBy: string) {
+  async reverseJournalEntry(id: string, reversedBy?: string) {
     const entry = await this.prisma.journalEntry.findUnique({
       where: { id },
       include: { lines: true },
@@ -131,7 +131,7 @@ export class AccountingService {
         groupId: entry.groupId,
         status: JournalEntryStatus.POSTED,
         postedAt: new Date(),
-        postedBy: reversedBy,
+        postedBy: reversedBy ?? 'system',
         lines: {
           create: entry.lines.map((l) => ({
             accountId: l.accountId,
@@ -145,15 +145,15 @@ export class AccountingService {
 
     await this.prisma.journalEntry.update({
       where: { id },
-      data: { status: JournalEntryStatus.REVERSED, reversedAt: new Date(), reversedBy, reverseRef: reversal.id },
+      data: { status: JournalEntryStatus.REVERSED, reversedAt: new Date(), reversedBy: reversedBy ?? 'system', reverseRef: reversal.id },
     })
 
     return reversal
   }
 
-  async getLedgerAccounts(params: { isActive?: boolean }) {
+  async getLedgerAccounts(params?: { isActive?: boolean }) {
     return this.prisma.ledgerAccount.findMany({
-      where: params.isActive !== undefined ? { isActive: params.isActive } : undefined,
+      where: params?.isActive !== undefined ? { isActive: params.isActive } : undefined,
       orderBy: { code: 'asc' },
       include: {
         children: { select: { id: true, code: true, name: true, accountType: true } },
