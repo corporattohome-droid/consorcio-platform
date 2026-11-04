@@ -33,6 +33,7 @@ jobs:
         with:
           node-version: '20'
       - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @consorcio/database exec prisma generate
       - run: pnpm --filter api test -- --passWithNoTests
   security-audit:
     name: Security Audit
