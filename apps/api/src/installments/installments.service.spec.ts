@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { InstallmentsService } from './installments.service'
 import { PrismaService } from '../shared/prisma/prisma.service'
-import { InstallmentStatus } from '@prisma/client'
 import { BadRequestException, NotFoundException } from '@nestjs/common'
+
+const InstallmentStatus = { PENDING: 'PENDING', PAID: 'PAID' } as const
 
 const mockGroup = {
   id: 'group1',
@@ -65,7 +66,7 @@ describe('InstallmentsService', () => {
         Array.from({ length: 60 }, (_, i) => ({ id: `inst${i}`, number: i + 1 }))
       )
 
-      const result = await service.generateSchedule('q1', new Date('2024-01-01'))
+      await service.generateSchedule('q1', new Date('2024-01-01'))
       const createArg = mockPrisma.installment.createMany.mock.calls[0][0].data
       expect(createArg).toHaveLength(60)
     })
@@ -122,7 +123,6 @@ describe('InstallmentsService', () => {
       expect(result.percentChange).toBe(10)
 
       const updateArg = updateMock.mock.calls[0][0].data
-      // 500 * 1.10 = 550
       expect(parseFloat(updateArg.totalAmount)).toBeCloseTo(550, 1)
     })
   })

@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { AccountingService, CreateJournalEntryDto } from './accounting.service'
 import { PrismaService } from '../shared/prisma/prisma.service'
-import { JournalEntryStatus, EntryType } from '@prisma/client'
 import { BadRequestException, NotFoundException, ConflictException } from '@nestjs/common'
+
+const JournalEntryStatus = { PENDING: 'PENDING', POSTED: 'POSTED', REVERSED: 'REVERSED' } as const
+const EntryType = { DEBIT: 'DEBIT', CREDIT: 'CREDIT' } as const
 
 const mockPrisma = {
   journalEntry: {
@@ -182,7 +184,7 @@ describe('AccountingService', () => {
       await service.reverseJournalEntry('entry1', 'user1')
 
       const createArg = mockPrisma.journalEntry.create.mock.calls[0][0].data
-      const lines = createArg.lines.create as Array<{ entryType: EntryType }>
+      const lines = createArg.lines.create as Array<{ entryType: string }>
       expect(lines[0].entryType).toBe(EntryType.CREDIT)
       expect(lines[1].entryType).toBe(EntryType.DEBIT)
     })

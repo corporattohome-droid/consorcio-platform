@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { PaymentsService } from './payments.service'
 import { PrismaService } from '../shared/prisma/prisma.service'
-import { InstallmentStatus } from '@prisma/client'
 import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common'
+
+const InstallmentStatus = { PENDING: 'PENDING', PAID: 'PAID' } as const
 
 const pendingInstallment = {
   id: 'inst1',
@@ -121,7 +122,6 @@ describe('PaymentsService', () => {
       })
 
       await service.registerTestPayment('quota1', 600, 'op1')
-      // Ambas as parcelas devem ter recebido alocação
       expect(createAllocMock).toHaveBeenCalledTimes(2)
     })
   })

@@ -1,8 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { ContemplationsService } from './contemplations.service'
 import { PrismaService } from '../shared/prisma/prisma.service'
-import { ContemplationStatus } from '@prisma/client'
 import { NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common'
+
+const ContemplationStatus = {
+  AWAITING_DOCUMENTATION: 'AWAITING_DOCUMENTATION',
+  CONTEMPLATED_DRAW: 'CONTEMPLATED_DRAW',
+  CONTEMPLATED_BID: 'CONTEMPLATED_BID',
+  CREDIT_RELEASED: 'CREDIT_RELEASED',
+} as const
 
 const mockPrisma = {
   contemplation: {
