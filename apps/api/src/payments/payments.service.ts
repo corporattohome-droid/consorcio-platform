@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException, Logger } from '@nestjs/common'
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Logger } from '@nestjs/common'
 import { PrismaService } from '../shared/prisma/prisma.service'
 import { InstallmentStatus } from '@prisma/client'
 import Decimal from 'decimal.js'
@@ -18,7 +18,7 @@ export class PaymentsService {
 
     const pending = await this.prisma.installment.findFirst({
       where: { quotaId, status: { in: [InstallmentStatus.PENDING, InstallmentStatus.OVERDUE] } },
-      orderBy: { installmentNumber: 'asc' },
+      orderBy: { number: 'asc' },
     })
     if (!pending) throw new NotFoundException('Nenhuma parcela pendente encontrada para esta cota')
 
@@ -32,22 +32,19 @@ export class PaymentsService {
     return this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
         data: {
-          quotaId,
           amount: paidAmount.toString(),
-          paidAt: new Date(),
-          method: 'TEST_ADAPTER',
+          confirmedAt: new Date(),
+          method: 'OTHER',
           status: 'CONFIRMED',
-          confirmedByUserId: operatorId,
-          referenceCode: `TEST-${Date.now()}`,
+          confirmedBy: operatorId,
+          externalRef: `TEST-${Date.now()}`,
         },
       })
 
       let remaining = paidAmount
-      const allocations = []
-
       const installmentsToAllocate = await tx.installment.findMany({
         where: { quotaId, status: { in: [InstallmentStatus.PENDING, InstallmentStatus.OVERDUE] } },
-        orderBy: { installmentNumber: 'asc' },
+        orderBy: { number: 'asc' },
       })
 
       for (const inst of installmentsToAllocate) {
@@ -55,19 +52,19 @@ export class PaymentsService {
         const due = new Decimal(inst.totalAmount)
         const allocated = Decimal.min(remaining, due)
         remaining = remaining.minus(allocated)
-        allocations.push(tx.paymentAllocation.create({
-          data: { paymentId: payment.id, installmentId: inst.id, amount: allocated.toString() },
-        }))
+        await tx.paymentAllocation.create({
+          data: {
+            paymentId: payment.id,
+            installmentId: inst.id,
+            allocatedAmount: allocated.toString(),
+            allocatedTo: 'INSTALLMENT',
+          },
+        })
         await tx.installment.update({
           where: { id: inst.id },
-          data: { paidAmount: allocated.toString(), status: InstallmentStatus.PAID, paidAt: new Date() },
+          data: { status: InstallmentStatus.PAID, paidAt: new Date() },
         })
       }
-
-      await Promise.all(allocations)
-
-      const paidCount = await tx.installment.count({ where: { quotaId, status: InstallmentStatus.PAID } })
-      await tx.quota.update({ where: { id: quotaId }, data: { paidInstallments: paidCount } })
 
       return payment
     })
@@ -80,13 +77,16 @@ export class PaymentsService {
       return { status: 'duplicate', eventId: existing.id }
     }
 
+    const chargeId = payload.chargeId ?? payload.id ?? idempotencyKey
+
     const event = await this.prisma.chargeWebhookEvent.upsert({
       where: { idempotencyKey },
       create: {
         idempotencyKey,
+        chargeId,
         provider: payload.provider ?? 'UNKNOWN',
         eventType: payload.event,
-        rawPayload: payload,
+        payload,
         processedAt: null,
       },
       update: {},
@@ -100,9 +100,13 @@ export class PaymentsService {
     const quota = await this.prisma.quota.findUnique({ where: { id: quotaId } })
     if (!quota) throw new NotFoundException('Cota não encontrada')
     return this.prisma.payment.findMany({
-      where: { quotaId },
-      orderBy: { paidAt: 'desc' },
-      include: { allocations: { include: { installment: { select: { installmentNumber: true, dueDate: true } } } } },
+      where: { allocations: { some: { installment: { quotaId } } } },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        allocations: {
+          include: { installment: { select: { number: true, dueDate: true } } },
+        },
+      },
     })
   }
 }

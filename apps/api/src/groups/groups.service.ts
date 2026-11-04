@@ -17,29 +17,24 @@ export class GroupsService {
         code,
         name: dto.name,
         description: dto.description,
-        category: dto.category,
+        planId: dto.planId,
         totalQuotas: dto.totalQuotas,
-        creditValue: new Decimal(dto.creditValue).toString(),
+        creditAmount: new Decimal(dto.creditAmount).toString(),
         termMonths: dto.termMonths,
-        adminFeePercent: new Decimal(dto.adminFeePercent).toString(),
-        reserveFundPercent: new Decimal(dto.reserveFundPercent ?? 0).toString(),
-        insurancePercent: new Decimal(dto.insurancePercent ?? 0).toString(),
-        enrollmentStartDate: dto.enrollmentStartDate ? new Date(dto.enrollmentStartDate) : undefined,
-        enrollmentEndDate: dto.enrollmentEndDate ? new Date(dto.enrollmentEndDate) : undefined,
-        expectedStartDate: dto.expectedStartDate ? new Date(dto.expectedStartDate) : undefined,
-        internalNotes: dto.internalNotes,
+        adminFeeRate: new Decimal(dto.adminFeeRate).toString(),
+        reserveFundRate: new Decimal(dto.reserveFundRate ?? 0).toString(),
+        insuranceRate: new Decimal(dto.insuranceRate ?? 0).toString(),
         status: GroupStatus.DRAFT,
       },
     })
   }
 
-  async findAll(params: { page?: number; limit?: number; status?: GroupStatus; category?: string }) {
+  async findAll(params: { page?: number; limit?: number; status?: GroupStatus }) {
     const page = params.page ?? 1
     const limit = Math.min(params.limit ?? 20, 100)
     const skip = (page - 1) * limit
     const where: any = {}
     if (params.status) where.status = params.status
-    if (params.category) where.category = params.category
 
     const [total, data] = await Promise.all([
       this.prisma.consortiumGroup.count({ where }),
@@ -56,7 +51,7 @@ export class GroupsService {
       where: { id },
       include: {
         _count: { select: { quotas: true, assemblies: true } },
-        assemblies: { orderBy: { scheduledAt: 'desc' }, take: 5 },
+        assemblies: { orderBy: { scheduledDate: 'desc' }, take: 5 },
       },
     })
     if (!group) throw new NotFoundException(`Grupo ${id} não encontrado`)
@@ -71,23 +66,14 @@ export class GroupsService {
 
     return this.prisma.$transaction(async (tx) => {
       await tx.consortiumGroup.update({
-        where: { id }, data: { status: GroupStatus.ENROLLMENT },
+        where: { id }, data: { status: GroupStatus.OPEN_FOR_ENROLLMENT },
       })
 
       const existingQuotas = await tx.quota.count({ where: { groupId: id } })
       if (existingQuotas === 0) {
         const quotasData = Array.from({ length: group.totalQuotas }, (_, i) => ({
           groupId: id,
-          quotaNumber: i + 1,
-          creditValue: group.creditValue,
-          installmentAmount: new Decimal(group.creditValue)
-            .plus(new Decimal(group.creditValue).mul(new Decimal(group.adminFeePercent).div(100)))
-            .plus(new Decimal(group.creditValue).mul(new Decimal(group.reserveFundPercent).div(100)))
-            .plus(new Decimal(group.creditValue).mul(new Decimal(group.insurancePercent).div(100)))
-            .div(group.termMonths)
-            .toDecimalPlaces(2)
-            .toString(),
-          totalInstallments: group.termMonths,
+          quotaNumber: String(i + 1).padStart(4, '0'),
         }))
         await tx.quota.createMany({ data: quotasData })
       }
@@ -102,7 +88,7 @@ export class GroupsService {
       include: { _count: { select: { quotas: true } } },
     })
     if (!group) throw new NotFoundException(`Grupo ${id} não encontrado`)
-    if (group.status !== GroupStatus.ENROLLMENT) {
+    if (group.status !== GroupStatus.OPEN_FOR_ENROLLMENT) {
       throw new ConflictException('Apenas grupos em período de adesão podem ser ativados')
     }
 
@@ -117,7 +103,7 @@ export class GroupsService {
     }
 
     return this.prisma.consortiumGroup.update({
-      where: { id }, data: { status: GroupStatus.ACTIVE, actualStartDate: new Date() },
+      where: { id }, data: { status: GroupStatus.ACTIVE },
     })
   }
 

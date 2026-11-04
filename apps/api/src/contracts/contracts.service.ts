@@ -15,24 +15,25 @@ export class ContractsService {
     if (!customer) throw new NotFoundException('Cliente não encontrado')
 
     const existing = await this.prisma.contract.findFirst({
-      where: { quotaId, status: { in: [ContractStatus.DRAFT, ContractStatus.SIGNED, ContractStatus.ACTIVE] } },
+      where: { quotaId, status: { in: [ContractStatus.DRAFT, ContractStatus.PENDING_SIGNATURE, ContractStatus.ACTIVE] } },
     })
     if (existing) throw new ConflictException('Já existe contrato ativo para esta cota')
 
-    const contractNumber = await this.generateContractNumber()
+    const number = await this.generateContractNumber()
 
     return this.prisma.contract.create({
       data: {
-        contractNumber,
+        number,
         quotaId,
         customerId,
-        groupId: quota.groupId,
         status: ContractStatus.DRAFT,
-        creditValue: quota.creditValue,
+        creditAmount: quota.group.creditAmount,
         termMonths: quota.group.termMonths,
-        adminFeePercent: quota.group.adminFeePercent,
-        reserveFundPercent: quota.group.reserveFundPercent,
-        insurancePercent: quota.group.insurancePercent,
+        adminFeeRate: quota.group.adminFeeRate,
+        reserveFundRate: quota.group.reserveFundRate,
+        insuranceRate: quota.group.insuranceRate,
+        templateVersion: '1.0',
+        adjustmentIndex: 'IGPM',
       },
       include: { quota: true, customer: { select: { fullName: true, taxIdMasked: true } } },
     })
@@ -72,17 +73,16 @@ export class ContractsService {
     return contract
   }
 
-  async sign(id: string, signerUserId: string) {
+  async sign(id: string, _signerUserId: string) {
     const contract = await this.findOne(id)
     if (contract.status !== ContractStatus.DRAFT) {
-      throw new ConflictException('Apenas contratos em rascunho podem ser assinados')
+      throw new ConflictException('Apenas contratos em rascunho podem ser enviados para assinatura')
     }
     return this.prisma.contract.update({
       where: { id },
       data: {
-        status: ContractStatus.SIGNED,
+        status: ContractStatus.PENDING_SIGNATURE,
         signedAt: new Date(),
-        signedByUserId: signerUserId,
       },
     })
   }

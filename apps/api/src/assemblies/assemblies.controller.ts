@@ -33,9 +33,8 @@ export class AssembliesController {
   async registerBid(
     @Param('id', ParseUUIDPipe) assemblyId: string,
     @Body('quotaId') quotaId: string,
-    @Body('customerId') customerId: string,
     @Body('bidAmount') bidAmount: number,
-  ) { return this.assembliesService.registerBid(assemblyId, quotaId, customerId, bidAmount) }
+  ) { return this.assembliesService.registerBid(assemblyId, quotaId, bidAmount) }
 
   @Post(':id/draw') @Roles(UserRole.MANAGER) @ApiOperation({ summary: 'Executar sorteio da assembleia — DEMONSTRATIVO' })
   async executeDraw(@Param('id', ParseUUIDPipe) id: string, @Request() req: any) {
